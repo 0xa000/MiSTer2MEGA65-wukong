@@ -21,3 +21,7 @@ M2M/rom/*.lis
 M2M/rom/*.out
 M2M/rom/*.rom
 M2M/video_filters/*.out
+
+# Wukong batch build outputs
+CORE/build-wukong/
+CORE/build-wukong*.log
