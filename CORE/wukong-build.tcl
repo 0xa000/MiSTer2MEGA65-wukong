@@ -4,6 +4,7 @@
 #   vivado -mode batch -source wukong-build.tcl -tclargs elab    # elaborate only (fast sanity check)
 #   vivado -mode batch -source wukong-build.tcl -tclargs synth   # synthesize, write checkpoint
 #   vivado -mode batch -source wukong-build.tcl -tclargs bit     # full flow to bitstream
+#   vivado -mode batch -source wukong-build.tcl -tclargs impl    # resume from post_synth.dcp to bitstream
 #
 # Run from the CORE/ directory. The QNICE firmware must exist:
 #   cd m2m-rom && ./make_rom.sh   (needs M2M/QNICE submodule + toolchain, see make_rom.sh)
@@ -145,21 +146,50 @@ read_xdc CORE.xdc
 # Flow
 # ---------------------------------------------------------------------------
 
+# Constraints that only resolve on the synthesized netlist (referenced from
+# WUKONG.xdc, where XDC application at elaboration time cannot find the cells)
+proc apply_post_synth_constraints {} {
+   # Place the IOSERDES_train of UberDDR3 manually (else the tool may place
+   # these blocks where they block the route for the ddr3_clk_p OBUFDS)
+   set otrain [get_cells -quiet -hier -filter {NAME =~ "*ddr3_phy_inst*OSERDESE2_train*"}]
+   set itrain [get_cells -quiet -hier -filter {NAME =~ "*ddr3_phy_inst*ISERDESE2_train*"}]
+   if { [llength $otrain] == 1 && [llength $itrain] == 1 } {
+      set_property LOC OLOGIC_X0Y91 $otrain
+      set_property LOC ILOGIC_X0Y94 $itrain
+      puts "== DDR3 train cells located: $otrain / $itrain =="
+   } else {
+      puts "CRITICAL WARNING: DDR3 IOSERDES train cells not uniquely found (o=[llength $otrain] i=[llength $itrain]) — check placement near ddr3_clk_p manually"
+   }
+   # ascal's reset_na is asynchronous by design
+   set ascal_rst [get_pins -quiet -hier -filter {NAME =~ "*i_ascal/reset_na"}]
+   if { [llength $ascal_rst] > 0 } {
+      set_false_path -through $ascal_rst
+   } else {
+      puts "CRITICAL WARNING: ascal reset_na pin not found — false path not applied"
+   }
+}
+
 if { $stage == "elab" } {
    synth_design -rtl -top $top -part $part
    puts "== Elaboration OK =="
    exit 0
 }
 
-synth_design -top $top -part $part
-write_checkpoint -force $outdir/post_synth.dcp
-report_utilization -file $outdir/utilization_synth.rpt
-report_timing_summary -file $outdir/timing_synth.rpt
+if { $stage == "impl" && [file exists $outdir/post_synth.dcp] } {
+   open_checkpoint $outdir/post_synth.dcp
+} else {
+   synth_design -top $top -part $part
+   write_checkpoint -force $outdir/post_synth.dcp
+   report_utilization -file $outdir/utilization_synth.rpt
+   report_timing_summary -file $outdir/timing_synth.rpt
+}
 
 if { $stage == "synth" } {
    puts "== Synthesis OK =="
    exit 0
 }
+
+apply_post_synth_constraints
 
 opt_design
 place_design

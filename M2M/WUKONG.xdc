@@ -66,16 +66,13 @@ set_false_path -quiet -from [get_pins -hierarchical -regexp ".*/i_ascal/o_.*_reg
 set_false_path -from [get_clocks hdmi_clk]  -to [get_clocks audio_clk]
 set_false_path -from [get_clocks audio_clk] -to [get_clocks hdmi_clk]
 set_false_path -from [get_clocks qnice_clk] -to [get_clocks hdmi_clk]
-set_false_path -through [get_pins i_framework/i_av_pipeline/i_digital_pipeline/i_ascal/reset_na]
+## NOTE: the ascal reset_na false path and the DDR3 IOSERDES_train LOCs only
+## resolve on the synthesized netlist; they are applied in wukong-build.tcl
+## after synth_design (search for apply_post_synth_constraints).
 
 ################################################################################
 # DDR3 (UberDDR3)
 ################################################################################
-
-## Place the IOSERDES_train manually (else the tool may place these blocks where
-## they block the route for the ddr3_clk_p OBUFDS) — from mega65-core-wukong
-set_property LOC OLOGIC_X0Y91 [get_cells -hier -filter {NAME =~ "*/ddr3_phy_inst/genblk5[1].OSERDESE2_train"}]
-set_property LOC ILOGIC_X0Y94 [get_cells -hier -filter {NAME =~ "*/ddr3_phy_inst/genblk5[0].ISERDESE2_train"}]
 
 set_property INTERNAL_VREF 0.675 [get_iobanks 16]
 
