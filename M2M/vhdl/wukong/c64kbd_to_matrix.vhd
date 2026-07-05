@@ -11,6 +11,15 @@
 -- HELP key (column 8, row 3), which the M2M Shell uses to open the on-screen
 -- menu — the physical RESTORE line is mapped there instead.
 --
+-- The MEGA65 keyboard also has dedicated CURSOR UP / CURSOR LEFT keys that
+-- its MCU reports as separate matrix positions (index 9, bits 1 and 2 = keys
+-- 73/74); matrix_to_keynum does no shift synthesis of its own. On a C64
+-- keyboard those combinations are SHIFT+DOWN / SHIFT+RIGHT, so this scanner
+-- synthesizes index 9 from them and suppresses the raw DOWN/RIGHT while
+-- doing so (otherwise the Shell would see both directions pressed at once).
+-- Cores that want the C64-style combo get it back through their keyboard
+-- mapping of keys 73/74, as on the MEGA65.
+--
 -- Electrical handling mirrors mega65-core-wukong's wukong.vhdl: columns are
 -- driven open-drain on porta (drive low or release), rows are read on portb
 -- which has FPGA pullups; before each column is scanned, portb is briefly
@@ -52,10 +61,35 @@ architecture behavioral of c64kbd_to_matrix is
    signal scan_col : integer range 0 to 7 := 0;
    signal wait_cnt : natural range 0 to 65535 := 0;
 
+   -- raw key states for the cursor synthesis, low active as everywhere here
+   signal shift_n      : std_logic;   -- LEFT SHIFT (col 1 row 7) or RIGHT SHIFT (col 6 row 4)
+   signal crsr_down_n  : std_logic;   -- VERT CRSR (col 0 row 7)
+   signal crsr_right_n : std_logic;   -- HORZ CRSR (col 0 row 2)
+   signal crsr_up_n    : std_logic;
+   signal crsr_left_n  : std_logic;
+
 begin
 
+   shift_n      <= matrix_ram(1)(7) and matrix_ram(6)(4);
+   crsr_down_n  <= matrix_ram(0)(7);
+   crsr_right_n <= matrix_ram(0)(2);
+   crsr_up_n    <= shift_n or crsr_down_n;
+   crsr_left_n  <= shift_n or crsr_right_n;
+
    -- kb_matrix_ram in the MEGA65 driver reads combinatorially; mimic that.
-   matrix_col <= matrix_ram(matrix_col_idx);
+   -- Column 0: while shift turns DOWN/RIGHT into UP/LEFT, hide the raw keys.
+   -- Column 9: dedicated CURSOR UP (bit 1) / CURSOR LEFT (bit 2) positions.
+   p_matrix_col : process (all)
+   begin
+      matrix_col <= matrix_ram(matrix_col_idx);
+      if matrix_col_idx = 0 then
+         matrix_col(7) <= crsr_down_n  or not crsr_up_n;
+         matrix_col(2) <= crsr_right_n or not crsr_left_n;
+      elsif matrix_col_idx = 9 then
+         matrix_col(1) <= crsr_up_n;
+         matrix_col(2) <= crsr_left_n;
+      end if;
+   end process p_matrix_col;
 
    p_scan : process (ioclock)
       -- ~1 us charge, ~10 us settle: full scan of 8 columns in under 100 us,
