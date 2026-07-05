@@ -356,8 +356,10 @@ begin
       main_drive_led_col_i    => main_drive_led_col,
       main_osm_control_m_o    => main_osm_control_m,
       main_qnice_gp_reg_o     => main_qnice_gp_reg,
-      main_audio_l_i          => main_audio_l,
-      main_audio_r_i          => main_audio_r,
+      -- TEMPORARY: audio muted during bring-up (democore's constant test tone
+      -- is annoying); restore main_audio_l/r here when done
+      main_audio_l_i          => (others => '0'),
+      main_audio_r_i          => (others => '0'),
       video_clk_i             => video_clk,
       video_rst_i             => video_rst,
       video_ce_i              => video_ce,
