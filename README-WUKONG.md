@@ -65,6 +65,14 @@ mega65-core-wukong configuration.
 
 ## Status
 
-* Elaborates and synthesizes cleanly in Vivado 2023.2
+* Full flow to bitstream in Vivado 2023.2, **all timing constraints met**
   (~28% LUTs, ~38% BRAM, ~26% DSP of the XC7A100T with the demo core).
+* The Avalon→Wishbone bridge is verified by a self-checking testbench
+  (`M2M/vhdl/wukong/sim/`) against a stalling, variable-latency slave model.
 * Not yet verified on hardware.
+
+Note for non-project (batch) builds: `auto_detect_xpm` is mandatory —
+without it the XPM_CDC/XPM_FIFO embedded timing constraints are silently
+skipped and every framework clock-domain crossing fails timing. Likewise,
+upstream's `set_false_path -through .../i_ascal/reset_na` does not resolve
+in this flow; both are handled inside `wukong-build.tcl`.

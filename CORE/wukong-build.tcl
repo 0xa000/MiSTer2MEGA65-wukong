@@ -142,6 +142,12 @@ read_verilog -sv $sverilog
 read_xdc ../M2M/WUKONG.xdc
 read_xdc CORE.xdc
 
+# Non-project mode does not scan for Xilinx Parameterized Macros by itself;
+# without this the XPM_CDC timing constraints (xpm_cdc_array_single,
+# xpm_cdc_async_rst, xpm_fifo_axis, ...) are silently skipped and all
+# framework clock-domain crossings fail timing.
+auto_detect_xpm
+
 # ---------------------------------------------------------------------------
 # Flow
 # ---------------------------------------------------------------------------
@@ -150,7 +156,9 @@ read_xdc CORE.xdc
 # WUKONG.xdc, where XDC application at elaboration time cannot find the cells)
 proc apply_post_synth_constraints {} {
    # Place the IOSERDES_train of UberDDR3 manually (else the tool may place
-   # these blocks where they block the route for the ddr3_clk_p OBUFDS)
+   # these blocks where they block the route for the ddr3_clk_p OBUFDS).
+   # The Wukong adaptation of UberDDR3 does not generate train IOSERDES in
+   # this configuration, so absence is expected and fine.
    set otrain [get_cells -quiet -hier -filter {NAME =~ "*ddr3_phy_inst*OSERDESE2_train*"}]
    set itrain [get_cells -quiet -hier -filter {NAME =~ "*ddr3_phy_inst*ISERDESE2_train*"}]
    if { [llength $otrain] == 1 && [llength $itrain] == 1 } {
@@ -158,14 +166,22 @@ proc apply_post_synth_constraints {} {
       set_property LOC ILOGIC_X0Y94 $itrain
       puts "== DDR3 train cells located: $otrain / $itrain =="
    } else {
-      puts "CRITICAL WARNING: DDR3 IOSERDES train cells not uniquely found (o=[llength $otrain] i=[llength $itrain]) — check placement near ddr3_clk_p manually"
+      puts "== DDR3 train IOSERDES not present in this UberDDR3 configuration — no LOC applied =="
    }
-   # ascal's reset_na is asynchronous by design
-   set ascal_rst [get_pins -quiet -hier -filter {NAME =~ "*i_ascal/reset_na"}]
+   # ascal's reset_na distribution is asynchronous by design. Upstream M2M
+   # uses "set_false_path -through .../i_ascal/reset_na", but that
+   # hierarchical pin does not survive synthesis in this flow; the equivalent
+   # is to cut all paths into the reset resynchronization registers inside
+   # ascal (avl_/i_/o_reset_na_reg), covering D as well as async CLR/PRE.
+   set ascal_rst [get_pins -quiet -hier -filter {
+      (NAME =~ "*/i_ascal/*reset_na_reg*/D") ||
+      (NAME =~ "*/i_ascal/*reset_na_reg*/CLR") ||
+      (NAME =~ "*/i_ascal/*reset_na_reg*/PRE")}]
    if { [llength $ascal_rst] > 0 } {
-      set_false_path -through $ascal_rst
+      set_false_path -to $ascal_rst
+      puts "== ascal reset_na false path applied to [llength $ascal_rst] pins =="
    } else {
-      puts "CRITICAL WARNING: ascal reset_na pin not found — false path not applied"
+      puts "CRITICAL WARNING: ascal reset_na resync registers not found — false path not applied"
    }
 }
 
