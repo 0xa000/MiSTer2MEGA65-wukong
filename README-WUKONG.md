@@ -56,20 +56,30 @@ through a 16-bit burst-capable Avalon-MM port in a 100 MHz clock domain.
 On the MEGA65 that is the HyperRAM; here it is:
 
 ```
-16-bit Avalon @100 MHz → avm_fifo (CDC) → avm_increase (16→128)
-   → avm_to_wb → UberDDR3 (83.33 MHz controller, 333.33 MHz DDR3)
+16-bit Avalon @100 MHz → avm_increase (16→128) → avm_to_wb
+   → UberDDR3 (100 MHz controller, 400 MHz DDR3)
 ```
 
-The DDR3/controller/reference clock ratios mirror the proven
-mega65-core-wukong configuration.
+The UberDDR3 controller clock *is* the framework's `hr_clk`: it is
+generated in `ddr3_wrapper_wukong` by the same MMCM as the DDR3 clocks
+(as the SERDES CLK/CLKDIV phase alignment requires) and exported to the
+framework, so the whole memory chain is a single clock domain with no
+CDC. 100/400 MHz is UberDDR3's reference configuration; an earlier
+revision ran 83.33/333.33 MHz to mirror mega65-core-wukong, with an
+`avm_fifo` clock crossing in between that corrupted the ascal
+framebuffer (vertical bands / black screen).
 
 ## Status
 
+* **Verified on hardware (2026-07-06)**: demo core fully working — DDR3
+  calibration, ascal framebuffer through DDR3, OSM menu, C64 keyboard
+  (including synthesized cursor-up/left), game start, HDMI video.
 * Full flow to bitstream in Vivado 2023.2, **all timing constraints met**
   (~28% LUTs, ~38% BRAM, ~26% DSP of the XC7A100T with the demo core).
 * The Avalon→Wishbone bridge is verified by a self-checking testbench
   (`M2M/vhdl/wukong/sim/`) against a stalling, variable-latency slave model.
-* Not yet verified on hardware.
+* Audio is temporarily muted in `top_wukong.vhd` (the demo core's constant
+  test tone); restore `main_audio_l/r` there when bringing up a real core.
 
 Note for non-project (batch) builds: `auto_detect_xpm` is mandatory —
 without it the XPM_CDC/XPM_FIFO embedded timing constraints are silently
