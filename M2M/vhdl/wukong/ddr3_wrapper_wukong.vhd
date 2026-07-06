@@ -2,19 +2,21 @@
 -- MiSTer2MEGA65 Framework — QMTECH Wukong board variant
 --
 -- Drop-in replacement for the M2M HyperRAM controller: presents the same
--- 16-bit burst-capable Avalon-MM slave in the hr_clk (100 MHz) domain, backed
--- by the Wukong's 256 MB DDR3 through the UberDDR3 open source controller.
+-- 16-bit burst-capable Avalon-MM slave, backed by the Wukong's 256 MB DDR3
+-- through the UberDDR3 open source controller.
 --
--- Internal chain:
+-- The UberDDR3 controller clock IS the framework's hr_clk: this wrapper
+-- generates the 100 MHz controller clock (exported as ctrl_clk_o, adopted
+-- by the framework as hr_clk) so the whole Avalon chain is a single clock
+-- domain with no CDC:
 --   16-bit Avalon @ 100 MHz
---     -> avm_fifo      (clock crossing to the 83.33 MHz controller domain)
 --     -> avm_increase  (16 -> 128 bit, matching UberDDR3's data width)
 --     -> avm_to_wb     (Avalon -> pipelined Wishbone)
---     -> ddr3_top_wukong (UberDDR3, 4:1, DDR3-666)
+--     -> ddr3_top_wukong (UberDDR3, 4:1, DDR3-800)
 --
--- Clocking mirrors the proven mega65-core-wukong setup: DDR3 at 333.33 MHz,
--- controller at 83.33 MHz, 200 MHz IDELAYCTRL reference — all derived here
--- from the 100 MHz board clock (VCO 1000 MHz).
+-- Clocking is UberDDR3's reference configuration: DDR3 at 400 MHz,
+-- controller at 100 MHz, 200 MHz IDELAYCTRL reference — all derived here
+-- from the 100 MHz board clock (VCO 800 MHz).
 --
 -- Wukong port done by 0xa000 in 2026 and licensed under GPL v3
 -------------------------------------------------------------------------------------------------------------
@@ -34,9 +36,15 @@ entity ddr3_wrapper_wukong is
       -- 100 MHz board clock for the internal clock generation
       sys_clk_i           : in    std_logic;
 
-      -- Avalon-MM slave in the hr_clk domain (same interface the HyperRAM controller had)
-      clk_i               : in    std_logic;
+      -- Asynchronous reset request (framework/core reset, any domain)
       rst_i               : in    std_logic;
+
+      -- Controller clock domain, exported: the framework adopts these as
+      -- hr_clk/hr_rst so the Avalon fabric and UberDDR3 share one domain
+      ctrl_clk_o          : out   std_logic;
+      ctrl_rst_o          : out   std_logic;
+
+      -- Avalon-MM slave in the ctrl_clk_o domain (same interface the HyperRAM controller had)
       avm_write_i         : in    std_logic;
       avm_read_i          : in    std_logic;
       avm_address_i       : in    std_logic_vector(31 downto 0);
@@ -124,17 +132,6 @@ architecture synthesis of ddr3_wrapper_wukong is
 
    signal ctrl_rst        : std_logic;
 
-   -- Avalon in the controller clock domain, 16-bit
-   signal ctrl_avm_write         : std_logic;
-   signal ctrl_avm_read          : std_logic;
-   signal ctrl_avm_address       : std_logic_vector(31 downto 0);
-   signal ctrl_avm_writedata     : std_logic_vector(15 downto 0);
-   signal ctrl_avm_byteenable    : std_logic_vector(1 downto 0);
-   signal ctrl_avm_burstcount    : std_logic_vector(7 downto 0);
-   signal ctrl_avm_readdata      : std_logic_vector(15 downto 0);
-   signal ctrl_avm_readdatavalid : std_logic;
-   signal ctrl_avm_waitrequest   : std_logic;
-
    -- Avalon in the controller clock domain, 128-bit
    signal wide_avm_write         : std_logic;
    signal wide_avm_read          : std_logic;
@@ -160,22 +157,22 @@ architecture synthesis of ddr3_wrapper_wukong is
 begin
 
    ---------------------------------------------------------------------------
-   -- Clock generation: VCO = 100 MHz * 10 = 1000 MHz
+   -- Clock generation: VCO = 100 MHz * 8 = 800 MHz
    ---------------------------------------------------------------------------
 
    i_mmcm_ddr3 : MMCME2_BASE
       generic map (
          BANDWIDTH          => "OPTIMIZED",
-         CLKFBOUT_MULT_F    => 10.000,     -- VCO 1000 MHz
+         CLKFBOUT_MULT_F    => 8.000,      -- VCO 800 MHz
          CLKFBOUT_PHASE     => 0.000,
          CLKIN1_PERIOD      => 10.0,       -- INPUT @ 100 MHz
-         CLKOUT0_DIVIDE_F   => 3.000,      -- DDR3 @ 333.33 MHz
+         CLKOUT0_DIVIDE_F   => 2.000,      -- DDR3 @ 400 MHz
          CLKOUT0_PHASE      => 0.000,
-         CLKOUT1_DIVIDE     => 3,          -- DDR3 @ 333.33 MHz, 90 degrees
+         CLKOUT1_DIVIDE     => 2,          -- DDR3 @ 400 MHz, 90 degrees
          CLKOUT1_PHASE      => 90.000,
-         CLKOUT2_DIVIDE     => 12,         -- Controller @ 83.33 MHz
+         CLKOUT2_DIVIDE     => 8,          -- Controller @ 100 MHz (= hr_clk)
          CLKOUT2_PHASE      => 0.000,
-         CLKOUT3_DIVIDE     => 5,          -- IDELAYCTRL reference @ 200 MHz
+         CLKOUT3_DIVIDE     => 4,          -- IDELAYCTRL reference @ 200 MHz
          CLKOUT3_PHASE      => 0.000,
          DIVCLK_DIVIDE      => 1,
          REF_JITTER1        => 0.010,
@@ -210,42 +207,12 @@ begin
          dest_arst => ctrl_rst
       ); -- i_rst_ctrl
 
-   ---------------------------------------------------------------------------
-   -- Avalon chain
-   ---------------------------------------------------------------------------
+   ctrl_clk_o <= ctrl_clk;
+   ctrl_rst_o <= ctrl_rst;
 
-   i_avm_fifo : entity work.avm_fifo
-      generic map (
-         G_WR_DEPTH     => 16,
-         G_RD_DEPTH     => 16,
-         G_FILL_SIZE    => 1,
-         G_ADDRESS_SIZE => 32,
-         G_DATA_SIZE    => 16
-      )
-      port map (
-         s_clk_i               => clk_i,
-         s_rst_i               => rst_i,
-         s_avm_waitrequest_o   => avm_waitrequest_o,
-         s_avm_write_i         => avm_write_i,
-         s_avm_read_i          => avm_read_i,
-         s_avm_address_i       => avm_address_i,
-         s_avm_writedata_i     => avm_writedata_i,
-         s_avm_byteenable_i    => avm_byteenable_i,
-         s_avm_burstcount_i    => avm_burstcount_i,
-         s_avm_readdata_o      => avm_readdata_o,
-         s_avm_readdatavalid_o => avm_readdatavalid_o,
-         m_clk_i               => ctrl_clk,
-         m_rst_i               => ctrl_rst,
-         m_avm_waitrequest_i   => ctrl_avm_waitrequest,
-         m_avm_write_o         => ctrl_avm_write,
-         m_avm_read_o          => ctrl_avm_read,
-         m_avm_address_o       => ctrl_avm_address,
-         m_avm_writedata_o     => ctrl_avm_writedata,
-         m_avm_byteenable_o    => ctrl_avm_byteenable,
-         m_avm_burstcount_o    => ctrl_avm_burstcount,
-         m_avm_readdata_i      => ctrl_avm_readdata,
-         m_avm_readdatavalid_i => ctrl_avm_readdatavalid
-      ); -- i_avm_fifo
+   ---------------------------------------------------------------------------
+   -- Avalon chain (entirely in the ctrl_clk domain — no CDC)
+   ---------------------------------------------------------------------------
 
    i_avm_increase : entity work.avm_increase
       generic map (
@@ -257,15 +224,15 @@ begin
       port map (
          clk_i                 => ctrl_clk,
          rst_i                 => ctrl_rst,
-         s_avm_write_i         => ctrl_avm_write,
-         s_avm_read_i          => ctrl_avm_read,
-         s_avm_address_i       => ctrl_avm_address,
-         s_avm_writedata_i     => ctrl_avm_writedata,
-         s_avm_byteenable_i    => ctrl_avm_byteenable,
-         s_avm_burstcount_i    => ctrl_avm_burstcount,
-         s_avm_readdata_o      => ctrl_avm_readdata,
-         s_avm_readdatavalid_o => ctrl_avm_readdatavalid,
-         s_avm_waitrequest_o   => ctrl_avm_waitrequest,
+         s_avm_write_i         => avm_write_i,
+         s_avm_read_i          => avm_read_i,
+         s_avm_address_i       => avm_address_i,
+         s_avm_writedata_i     => avm_writedata_i,
+         s_avm_byteenable_i    => avm_byteenable_i,
+         s_avm_burstcount_i    => avm_burstcount_i,
+         s_avm_readdata_o      => avm_readdata_o,
+         s_avm_readdatavalid_o => avm_readdatavalid_o,
+         s_avm_waitrequest_o   => avm_waitrequest_o,
          m_avm_write_o         => wide_avm_write,
          m_avm_read_o          => wide_avm_read,
          m_avm_address_o       => wide_avm_address,
@@ -312,8 +279,8 @@ begin
 
    i_ddr3_top : ddr3_top_wukong
       generic map (
-         CONTROLLER_CLK_PERIOD => 12_000,
-         DDR3_CLK_PERIOD       => 3_000
+         CONTROLLER_CLK_PERIOD => 10_000,
+         DDR3_CLK_PERIOD       => 2_500
       )
       port map (
          i_controller_clk => ctrl_clk,

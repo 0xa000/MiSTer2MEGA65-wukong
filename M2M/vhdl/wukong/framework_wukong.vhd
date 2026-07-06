@@ -251,9 +251,7 @@ signal video_mode : video_modes_t;
 ---------------------------------------------------------------------------------------------
 
 signal qnice_clk              : std_logic;               -- QNICE main clock @ 50 MHz
-signal hr_clk                 : std_logic;               -- HyperRAM @ 100 MHz
-signal hr_clk_del             : std_logic;               -- HyperRAM @ 100 MHz phase delayed
-signal hr_delay_refclk        : std_logic;               -- HyperRAM @ 200 MHz
+signal hr_clk                 : std_logic;               -- RAM/Avalon fabric @ 100 MHz (= UberDDR3 controller clock, from i_ddr3_wrapper)
 signal audio_clk              : std_logic;               -- Audio clock @ 60 MHz
 signal tmds_clk               : std_logic;               -- HDMI pixel clock at 5x speed for TMDS @ 371.25 MHz
 signal hdmi_clk               : std_logic;               -- HDMI pixel clock at normal speed @ 74.25 MHz
@@ -261,6 +259,7 @@ signal sys_pps                : std_logic;               -- One pulse per second
 
 signal qnice_rst              : std_logic;
 signal hr_rst                 : std_logic;
+signal ddr3_arst              : std_logic;               -- async reset request into i_ddr3_wrapper
 signal audio_rst              : std_logic;
 signal hdmi_rst               : std_logic;
 
@@ -429,14 +428,18 @@ begin
          core_rstn_i       => reset_core_n,       -- reset only the core (means the HyperRAM needs to be reset, too)
          qnice_clk_o       => qnice_clk,
          qnice_rst_o       => qnice_rst,
-         hr_clk_o          => hr_clk,
-         hr_clk_del_o      => hr_clk_del,
-         hr_delay_refclk_o => hr_delay_refclk,
-         hr_rst_o          => hr_rst,
+         hr_clk_o          => open,               -- hr_clk/hr_rst come from i_ddr3_wrapper instead:
+         hr_clk_del_o      => open,               -- the UberDDR3 controller clock IS the hr domain,
+         hr_delay_refclk_o => open,               -- so the Avalon memory chain needs no CDC
+         hr_rst_o          => open,
          audio_clk_o       => audio_clk,
          audio_rst_o       => audio_rst,
          sys_pps_o         => sys_pps
       ); -- i_clk_m2m
+
+   -- Same reset semantics the hr domain had in clk_m2m: both the framework
+   -- reset and a core-only reset must reset the RAM (and recalibrate DDR3)
+   ddr3_arst <= not reset_m2m_n or not reset_core_n;
 
    video_mode <= C_SVGA_800_600_60    when qnice_video_mode_i = C_VIDEO_SVGA_800_60   else
                  C_HDMI_720x480p_5994 when qnice_video_mode_i = C_VIDEO_HDMI_720_5994 else
@@ -952,8 +955,9 @@ begin
    i_ddr3_wrapper : entity work.ddr3_wrapper_wukong
       port map (
          sys_clk_i           => clk_i,
-         clk_i               => hr_clk,
-         rst_i               => hr_rst,
+         rst_i               => ddr3_arst,
+         ctrl_clk_o          => hr_clk,
+         ctrl_rst_o          => hr_rst,
          avm_write_i         => hr_write,
          avm_read_i          => hr_read,
          avm_address_i       => hr_address,
