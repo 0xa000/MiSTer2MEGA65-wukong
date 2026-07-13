@@ -117,7 +117,10 @@ module ddr3_top_wukong #(
             .SECOND_WISHBONE(0), //set to 1 if 2nd wishbone is needed
             .ECC_ENABLE(0), // set to 1 or 2 to add ECC (1 = Side-band ECC per burst, 2 = Side-band ECC per 8 bursts , 3 = Inline ECC )
             .WB_ERROR(0), // set to 1 to support Wishbone error (asserts at ECC double bit error)
-            .SKIP_INTERNAL_TEST(0)
+            // 1: skip the >2 s built-in self test after every calibration —
+            // cuts button-reset recovery by ~2 s and removes the 1-2 frames
+            // of test-pattern residue scanned out of the framebuffer at wake
+            .SKIP_INTERNAL_TEST(1)
         ) ddr3_controller_inst (
             .i_controller_clk(i_controller_clk), //i_controller_clk has period of CONTROLLER_CLK_PERIOD 
             .i_rst_n(i_rst_n), //200MHz input clock
